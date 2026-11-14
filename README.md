@@ -1,6 +1,6 @@
 # 铎岑种子萌发批次概率册
 
-以独立批次的萌发数k/试种数n拟合有界Beta-Binomial经验贝叶斯先验，读取条件收缩、区间、阈值概率和同批下一轮计数预测。
+以独立批次的萌发数k/试种数n拟合有界Beta-Binomial经验贝叶斯先验，读取条件收缩、区间、阈值概率和同批下一轮计数预测；完成研究内可选取多批、分别设试种数，按条件独立假设卷积出合计萌发数的完整分布、等尾区间与达到目标的概率。
 
 铎岑种质试验室有14位批次分析员。上游 `duocen-germination-lots-202611.csv` 是各批独立试种汇总；过去直接比较小批0/1比例、忽略批间差异、把拟合先验当成已知真相。本系统替代跨批率估计与补种研究归档，下游由种质负责人批准独立补种计划，阅读者下载获批汇总/预测PMF。全部是合成研究，不执行真实补种、种子合格判定或自动发货。
 
@@ -17,9 +17,9 @@ docker compose exec -T backend python -m scripts.seed_demo
 
 | 角色 | 账号 | 密码 | 页面与权限 |
 |---|---|---|---|
-| admin 种质负责人 | admin@duocen.demo | Duocen2026! | 六页；批注、创建研究、提交、批准/退回 |
-| analyst 批次分析员 | analyst@duocen.demo | Duocen2026! | 六页；核对n/k、创建研究、计数批注、补种说明 |
-| viewer 抽样阅读者 | viewer@duocen.demo | Duocen2026! | 六页只读；获批后下载汇总及完整预测PMF CSV |
+| admin 种质负责人 | admin@duocen.demo | Duocen2026! | 七页；批注、创建研究、提交、批准/退回 |
+| analyst 批次分析员 | analyst@duocen.demo | Duocen2026! | 七页；核对n/k、创建研究、计数批注、补种说明 |
+| viewer 抽样阅读者 | viewer@duocen.demo | Duocen2026! | 七页只读；获批后下载汇总及完整预测PMF CSV |
 
 JWT角色后端真实执行，viewer写入403、analyst审批403、未批准导出403，已审阅建议不可重复审批。登录/计数批注/排队/worker完成/建议和审批写审计；登录IP每分钟最多30次。另有全局异常中间件，422校验handler只返回loc/msg文本，不回显NaN/Inf input，避免错误响应序列化成500。部署前修改JWT_SECRET及Compose内数据库口令。
 
@@ -34,9 +34,9 @@ JWT角色后端真实执行，viewer写入403、analyst审批403、未批准导�
 7. 09:25 切换 `DC-02` 同观测率夹具：所有批70/100，α真实触及5000上界，界面标弱识别；不把窄条件区间当成稳定已知先验。
 8. 10:00 陆岑批准独立补种研究，温桥下载 `germination-N-summary.csv` 和 `germination-N-predictive.csv`，按相同n/k口径另做独立试种。
 
-## 六页、五实体与seed
+## 七页、五实体与seed
 
-批次总览、计数来源、先验与情景、条件后验、补种审阅、研究留痕。`GerminationStudy / SeedLot / LotCount / BayesRun / SamplingNote` 均贯穿表/model/schema/service/route/前端API/store/页面或业务组件，另有User/Audit。批次身份与n/k只读核对，计数批注可写，运行冻结快照后不回写。
+批次总览、计数来源、先验与情景、条件后验、补种合计、补种审阅、研究留痕。`GerminationStudy / SeedLot / LotCount / BayesRun / SamplingNote` 均贯穿表/model/schema/service/route/前端API/store/页面或业务组件，另有User/Audit。批次身份与n/k只读核对，计数批注可写，运行冻结快照后不回写。
 
 三研究×28=84批次、84计数：DC-01潜在率Beta(8,4)再Binomial抽样（固定种子320）；DC-02全部70/100为人工构造的同观测率上界夹具，不冒充随机抽样；DC-03固定种子322生成n、k全部0，全一另外有独立算法拒绝验证。每批n20–180。自然键email、study code、(study,lot code)、lot_id唯一计数、基线run name；重复seed只补缺失，不覆盖用户批注、计数或已批准建议。`SEED_DEMO=true`启动执行，失败记日志；可独立重复执行seed。
 
@@ -75,6 +75,12 @@ Var[K] = m*a*b*(a+b+m)/((a+b)^2*(a+b+1))
 
 这些区间、阈值概率和未来计数**都条件于点估超参数**，不包含αβ估计误差，不是完整层级贝叶斯区间、频率覆盖保证、种子合格概率或自动发货依据。估计先验使用这些批次（包含本批），不冒充独立已知先验；未来预测针对同一批次，不是全新未知批。
 
+## 多批合计补种分布
+
+`POST /runs/{id}/combinations` 接收 `{selections:[{lot_id,future_n}],target}`：从**已完成运行的冻结结果**取各批条件后验形状（post_alpha/post_beta），各批未来计数条件于同一点估αβ相互独立，合计萌发数分布在对数空间逐批卷积（logaddexp累积，极小尾概率以log_probability保存、不在线性空间下溢）。返回完整合计PMF（概率与log概率）、合计均值/方差（条件独立下各批之和）、95%等尾区间（由合计CDF实算，**不能由单批区间相加得到**，直接相加会系统性偏宽）以及Pr(合计≥target)。响应回显冻结run的fit_hash/input_hash并附selection_hash，可复现核对。
+
+约束：2–40个批次、每批试种数1–200、合计试种数≤2000粒、0≤target≤合计试种数；重复批次、非本运行冻结批次、容量超限、目标越界均以422/409明确拒绝；未完成运行不可合并。合计只读冻结快照、不回写，来源计数后续改动不影响已有研究的合计结果；仍不含超参数估计误差，不作合格保证或自动发货依据。补种合计页列出各批贡献（试种数、后验形状、贡献均值/方差、均值占比）与合计行，并绘制完整合计PMF、等尾区间带与目标线。
+
 ## 开发与工程
 
 React18.3/ReactRouter7.18.5/TypeScript5.7/Vite6.4.6；Python3.11/FastAPI0.115/SQLAlchemy2/NumPy2.2/SciPy1.15；PostgreSQL16/Redis7/Nginx1.27。
@@ -94,7 +100,13 @@ npm ci
 npm run dev
 ```
 
-backend/src/{routes,controllers,services,models,schemas,middlewares,utils,constants,config}按来源、边际拟合、后验、运行、审阅拆分；backend/scripts/seed_demo.py；migration为可选索引，metadata首次建表，非独立全量DDL。frontend/src/{api,stores,types,components/common,hooks,pages,router,utils,constants}为React应用。
+backend/src/{routes,controllers,services,models,schemas,middlewares,utils,constants,config}按来源、边际拟合、后验、合计卷积、运行、审阅拆分；backend/scripts/seed_demo.py；migration为可选索引，metadata首次建表，非独立全量DDL。frontend/src/{api,stores,types,components/common,hooks,pages,router,utils,constants}为React应用。
+
+```sh
+# 后端测试：卷积对照暴力枚举、等尾区间口径、极小尾概率log空间、历史冻结研究与路由
+cd backend
+python -m pytest tests
+```
 
 角色枚举backend/constants/roles与frontend/constants/enums用于鉴权/显示，队列状态backend/constants/status与前端RunStatus用于worker/StatusBadge，审阅Literal在backend/schemas/note与model/service/前端ReviewStatus。环境变量COMPOSE_PROJECT_NAME、FRONTEND_PORT、BACKEND_PORT、DB_PORT、JWT_SECRET、SEED_DEMO在.env；DATABASE_URL/REDIS_URL由Compose定义。
 
